@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>To do List | 日課・四象限・ガント</title>
+    <link rel="stylesheet" href="styles.css?v=20260708-3" />
+    <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script defer src="app.js?v=20260708-3"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <i data-lucide="list-checks"></i>
+          </div>
+          <div>
+            <h1>To do List</h1>
+            <p>日課・四象限・目的別ガント</p>
+          </div>
+        </div>
+
+        <div class="topbar-controls">
+          <label class="date-picker">
+            <span>日付</span>
+            <input id="selectedDate" type="date" />
+          </label>
+          <button class="ghost-btn" type="button" data-action="today" title="今日へ移動">
+            <i data-lucide="calendar-days"></i>
+            <span>今日</span>
+          </button>
+        </div>
+
+        <div class="topbar-actions">
+          <span id="saveStatus" class="save-status">保存済み</span>
+          <button
+            id="settingsToggle"
+            class="icon-btn"
+            type="button"
+            data-action="toggle-settings-panel"
+            aria-expanded="false"
+            aria-controls="settingsActions"
+            title="連携と保存の操作を表示"
+          >
+            <i data-lucide="sliders-horizontal"></i>
+            <span>連携</span>
+          </button>
+          <div id="settingsActions" class="settings-actions is-collapsed">
+            <button class="icon-btn" type="button" data-action="gas-settings" title="GAS連携設定">
+              <i data-lucide="settings"></i>
+              <span>GAS設定</span>
+            </button>
+            <button class="icon-btn" type="button" data-action="gas-load" title="GASから読み込み">
+              <i data-lucide="cloud-download"></i>
+              <span>GAS読込</span>
+            </button>
+            <button class="primary-btn" type="button" data-action="gas-save" title="GASへ保存">
+              <i data-lucide="cloud-upload"></i>
+              <span>GAS保存</span>
+            </button>
+            <button class="icon-btn" type="button" data-action="import" title="表から読み込み">
+              <i data-lucide="upload-cloud"></i>
+              <span>読込</span>
+            </button>
+            <button class="primary-btn" type="button" data-action="export" title="Excelに保存">
+              <i data-lucide="download-cloud"></i>
+              <span>表に保存</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <nav class="view-tabs" aria-label="表示切替">
+        <button class="is-active" type="button" data-view-button="today">
+          <i data-lucide="sun"></i>
+          <span>今日</span>
+        </button>
+        <button type="button" data-view-button="quadrants">
+          <i data-lucide="layout-grid"></i>
+          <span>四象限</span>
+        </button>
+        <button type="button" data-view-button="gantt">
+          <i data-lucide="gantt-chart-square"></i>
+          <span>ガント</span>
+        </button>
+      </nav>
+
+      <main>
+        <section id="todayView" class="view is-active" aria-labelledby="todayTitle">
+          <div class="daily-layout">
+            <section class="focus-band">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Daily Focus</p>
+                  <h2 id="todayTitle">今日の実行</h2>
+                </div>
+                <span id="todaySummary" class="pill">0 / 0</span>
+              </div>
+
+              <div class="daily-grid">
+                <label class="field stretch">
+                  <span>今日の最重要目標</span>
+                  <input id="mainGoal" type="text" placeholder="今日もっとも前進させること" />
+                </label>
+                <label class="field">
+                  <span>できたこと</span>
+                  <textarea id="reviewDone" rows="3"></textarea>
+                </label>
+                <label class="field">
+                  <span>計画との差</span>
+                  <textarea id="reviewGap" rows="3"></textarea>
+                </label>
+                <label class="field">
+                  <span>明日への改善</span>
+                  <textarea id="reviewNext" rows="3"></textarea>
+                </label>
+              </div>
+            </section>
+
+            <section class="metrics-row" aria-label="今日の状態">
+              <div class="metric">
+                <span>未完了</span>
+                <strong id="metricOpen">0</strong>
+              </div>
+              <div class="metric">
+                <span>今日まで</span>
+                <strong id="metricDue">0</strong>
+              </div>
+              <div class="metric">
+                <span>第2象限</span>
+                <strong id="metricQ2">0</strong>
+              </div>
+              <div class="metric">
+                <span>日課</span>
+                <strong id="metricRoutine">0%</strong>
+              </div>
+            </section>
+
+            <section class="work-split">
+              <div class="tool-panel">
+                <div class="section-heading tight">
+                  <div>
+                    <p class="eyebrow">Routine</p>
+                    <h2>毎日のルーチン</h2>
+                  </div>
+                  <button class="icon-only" type="button" data-action="toggle-routine-form" title="日課を追加">
+                    <i data-lucide="plus"></i>
+                  </button>
+                </div>
+                <form id="routineForm" class="inline-form is-collapsed">
+                  <input name="title" type="text" placeholder="日課を追加" required />
+                  <input name="area" type="text" placeholder="領域" />
+                  <input name="minutes" type="number" min="0" step="5" placeholder="分" />
+                  <button class="primary-btn compact" type="submit">
+                    <i data-lucide="plus"></i>
+                    <span>追加</span>
+                  </button>
+                </form>
+                <div id="routineList" class="routine-list"></div>
+              </div>
+
+              <div class="tool-panel">
+                <div class="section-heading tight">
+                  <div>
+                    <p class="eyebrow">Focus Tasks</p>
+                    <h2>今日扱うタスク</h2>
+                  </div>
+                  <button class="icon-only" type="button" data-action="new-task" title="タスクを追加">
+                    <i data-lucide="plus"></i>
+                  </button>
+                </div>
+
+                <form id="quickTaskForm" class="quick-task is-collapsed">
+                  <input name="title" type="text" placeholder="タスクを追加" required />
+                  <select name="projectId" aria-label="目的 / プロジェクト"></select>
+                  <select name="priority" aria-label="優先度">
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                  </select>
+                  <input name="dueDate" type="date" aria-label="期限" />
+                  <label class="check-chip">
+                    <input name="important" type="checkbox" checked />
+                    <span>重要</span>
+                  </label>
+                  <label class="check-chip">
+                    <input name="urgent" type="checkbox" />
+                    <span>緊急</span>
+                  </label>
+                  <button class="primary-btn compact" type="submit">
+                    <i data-lucide="plus"></i>
+                    <span>追加</span>
+                  </button>
+                </form>
+
+                <form id="todayTaskPickerForm" class="today-picker-form">
+                  <select id="todayQuadrantPicker" name="quadrant" aria-label="四象限を選ぶ">
+                    <option value="q1">第1象限 緊急・重要</option>
+                    <option value="q2">第2象限 重要・緊急ではない</option>
+                    <option value="q3">第3象限 緊急・重要ではない</option>
+                    <option value="q4">第4象限 緊急でも重要でもない</option>
+                  </select>
+                  <select id="todayTaskPicker" name="taskId" aria-label="四象限のTo doから選ぶ"></select>
+                  <button class="ghost-btn compact" type="submit">
+                    <i data-lucide="calendar-plus"></i>
+                    <span>今日へ</span>
+                  </button>
+                </form>
+
+                <div id="focusTaskList" class="task-stack"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="quadrantsView" class="view" aria-labelledby="quadrantsTitle">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">Priority Matrix</p>
+              <h2 id="quadrantsTitle">四象限 To do</h2>
+            </div>
+            <div class="toolbar">
+              <label class="toggle">
+                <input id="showDone" type="checkbox" />
+                <span>完了も表示</span>
+              </label>
+              <button class="primary-btn" type="button" data-action="new-task">
+                <i data-lucide="plus"></i>
+                <span>タスク</span>
+              </button>
+            </div>
+          </div>
+          <div id="quadrantBoard" class="quadrant-board"></div>
+        </section>
+
+        <section id="ganttView" class="view" aria-labelledby="ganttTitle">
+          <div class="section-heading page-heading">
+            <div>
+              <p class="eyebrow">Project Timeline</p>
+              <h2 id="ganttTitle">目的別ガント</h2>
+            </div>
+            <div class="toolbar">
+              <select id="projectFilter" aria-label="プロジェクトで絞り込み"></select>
+              <button class="primary-btn" type="button" data-action="new-project">
+                <i data-lucide="folder-plus"></i>
+                <span>目的</span>
+              </button>
+            </div>
+          </div>
+
+          <form id="projectForm" class="project-form is-collapsed">
+            <input name="name" type="text" placeholder="目的 / プロジェクト名" required />
+            <input name="purpose" type="text" placeholder="目的" />
+            <input name="startDate" type="date" aria-label="開始日" />
+            <input name="endDate" type="date" aria-label="終了日" />
+            <input name="color" type="color" value="#2563eb" aria-label="色" />
+            <button class="primary-btn compact" type="submit">
+              <i data-lucide="plus"></i>
+              <span>追加</span>
+            </button>
+          </form>
+
+          <div id="ganttChart" class="gantt-wrap"></div>
+        </section>
+      </main>
+    </div>
+
+    <input id="spreadsheetInput" class="visually-hidden" type="file" accept=".xlsx,.xls,.xml,.json" />
+
+    <dialog id="taskDialog" class="task-dialog">
+      <form id="taskDialogForm" method="dialog">
+        <input type="hidden" name="id" />
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">Task</p>
+            <h2 id="dialogTitle">タスク</h2>
+          </div>
+          <button class="icon-only" type="button" data-action="close-dialog" title="閉じる">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+
+        <label class="field stretch">
+          <span>タスク</span>
+          <input name="title" type="text" required />
+        </label>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>目的 / プロジェクト</span>
+            <select name="projectId"></select>
+          </label>
+          <label class="field">
+            <span>四象限</span>
+            <select name="quadrant">
+              <option value="q1">第1象限 緊急・重要</option>
+              <option value="q2">第2象限 重要・緊急ではない</option>
+              <option value="q3">第3象限 緊急・重要ではない</option>
+              <option value="q4">第4象限 緊急でも重要でもない</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>優先度</span>
+            <select name="priority">
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>ステータス</span>
+            <select name="status">
+              <option value="未着手">未着手</option>
+              <option value="進行中">進行中</option>
+              <option value="保留">保留</option>
+              <option value="完了">完了</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>見積分</span>
+            <input name="estimateMinutes" type="number" min="0" step="5" />
+          </label>
+          <label class="field">
+            <span>開始日</span>
+            <input name="startDate" type="date" />
+          </label>
+          <label class="field">
+            <span>期限</span>
+            <input name="dueDate" type="date" />
+          </label>
+        </div>
+
+        <div class="dialog-checks">
+          <label class="check-chip">
+            <input name="important" type="checkbox" />
+            <span>重要</span>
+          </label>
+          <label class="check-chip">
+            <input name="urgent" type="checkbox" />
+            <span>緊急</span>
+          </label>
+          <label class="range-field">
+            <span>進捗</span>
+            <input name="progress" type="range" min="0" max="100" step="5" />
+            <output name="progressOutput">0%</output>
+          </label>
+        </div>
+
+        <label class="field stretch">
+          <span>メモ</span>
+          <textarea name="notes" rows="4"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" data-action="delete-task">
+            <i data-lucide="trash-2"></i>
+            <span>削除</span>
+          </button>
+          <div>
+            <button class="ghost-btn" type="button" data-action="close-dialog">キャンセル</button>
+            <button class="primary-btn" type="submit">
+              <i data-lucide="save"></i>
+              <span>保存</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="gasDialog" class="settings-dialog">
+      <form id="gasForm" method="dialog">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">Google Apps Script</p>
+            <h2>GAS連携設定</h2>
+          </div>
+          <button class="icon-only" type="button" data-action="close-gas-dialog" title="閉じる">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+
+        <label class="field stretch">
+          <span>WebアプリURL</span>
+          <input name="url" type="url" placeholder="https://script.google.com/macros/s/.../exec" />
+        </label>
+
+        <label class="toggle settings-toggle">
+          <input name="autoSync" type="checkbox" />
+          <span>変更時に自動でGASへ保存</span>
+        </label>
+
+        <div class="settings-note">
+          Apps Scriptを「ウェブアプリ」としてデプロイし、発行されたURLをここに貼り付けます。
+        </div>
+
+        <div class="dialog-actions">
+          <button class="ghost-btn" type="button" data-action="gas-test">
+            <i data-lucide="wifi"></i>
+            <span>接続確認</span>
+          </button>
+          <div>
+            <button class="ghost-btn" type="button" data-action="close-gas-dialog">キャンセル</button>
+            <button class="primary-btn" type="submit">
+              <i data-lucide="save"></i>
+              <span>保存</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
