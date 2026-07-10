@@ -11,6 +11,17 @@
 8. To do Listツールで「GAS設定」を開き、URLを貼り付けて保存します。
 9. 「接続確認」でスプレッドシート名が表示されれば連携完了です。
 
+## Vercelで使う場合
+
+Vercelでは、アプリ画面にURLを貼り付けずに使えます。
+
+1. VercelのProject SettingsでEnvironment Variablesを開きます。
+2. `GAS_WEB_APP_URL` にApps ScriptのWebアプリURLを設定します。
+3. Vercelで再デプロイします。
+4. アプリ画面では「WebアプリURL」を空欄のままにします。
+
+詳しい手順は、リポジトリ直下の `VERCEL.md` を見てください。
+
 ## 使い方
 
 - `GAS保存`: 現在のタスク、日課、目的、日次レビューをスプレッドシートへ保存します。

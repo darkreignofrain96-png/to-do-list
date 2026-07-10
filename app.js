@@ -2,6 +2,7 @@ const STORAGE_KEY = "ux-todo-list-tool-v1";
 const GAS_CONFIG_KEY = "ux-todo-list-tool-gas-v1";
 const UI_CONFIG_KEY = "ux-todo-list-tool-ui-v1";
 const XLSX_DATE_OFFSET = 25569;
+const VERCEL_GAS_ENDPOINT = "/api/gas";
 
 const quadrantMeta = {
   q1: {
@@ -35,12 +36,14 @@ const quadrantMeta = {
 };
 
 let state = loadState();
+let hasStoredGasConfig = false;
 let gasConfig = loadGasConfig();
 let uiConfig = loadUiConfig();
 let activeView = "today";
 let saveTimer = null;
 let gasSaveTimer = null;
 let preferredProjectId = "";
+let gasProxyAvailable = false;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -50,6 +53,7 @@ init();
 function init() {
   bindEvents();
   render();
+  detectVercelGasProxyConfig();
 }
 
 function bindEvents() {
@@ -395,7 +399,7 @@ function handleGasSettingsSubmit(event) {
   };
   saveGasConfig();
   closeGasDialog();
-  $("#saveStatus").textContent = gasConfig.url ? "GAS設定済み" : "GAS未設定";
+  $("#saveStatus").textContent = getGasConnectionMode() === "vercel" ? "Vercel GAS設定を使用" : gasConfig.url ? "GAS設定済み" : "GAS未設定";
 }
 
 function openGasDialog() {
@@ -430,13 +434,17 @@ async function gasSave({ silent = false } = {}) {
   };
 
   try {
-    if (!silent) await gasJsonp("ping", {}, 12000);
-    await fetch(gasConfig.url, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
-    });
+    if (getGasConnectionMode() === "vercel") {
+      await gasProxyRequest("save", { method: "POST", payload });
+    } else {
+      if (!silent) await gasJsonp("ping", {}, 12000);
+      await fetch(gasConfig.url, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(payload),
+      });
+    }
     gasConfig.lastSyncAt = new Date().toISOString();
     saveGasConfig();
     $("#saveStatus").textContent = silent ? "自動GAS保存済み" : "GASへ送信済み";
@@ -451,7 +459,7 @@ async function gasLoad() {
   $("#saveStatus").textContent = "GAS読込中";
 
   try {
-    const result = await gasJsonp("load");
+    const result = getGasConnectionMode() === "vercel" ? await gasProxyRequest("load") : await gasJsonp("load");
     if (!result?.ok) throw new Error(result?.error || "GASからデータを読み込めませんでした。");
     const loaded = normalizeGasState(result);
     if (!loaded.tasks.length && !loaded.routines.length && !loaded.projects.length) {
@@ -474,7 +482,7 @@ async function gasTest() {
   $("#saveStatus").textContent = "GAS確認中";
 
   try {
-    const result = await gasJsonp("ping", {}, 12000);
+    const result = getGasConnectionMode() === "vercel" ? await gasProxyRequest("ping", { timeoutMs: 12000 }) : await gasJsonp("ping", {}, 12000);
     if (!result?.ok) throw new Error(result?.error || "接続確認に失敗しました。");
     $("#saveStatus").textContent = "GAS接続OK";
     alert(`GASに接続できました。\n保存先: ${result.spreadsheetName || "スプレッドシート"}`);
@@ -485,17 +493,79 @@ async function gasTest() {
 }
 
 function scheduleGasAutoSave() {
-  if (!gasConfig.autoSync || !gasConfig.url) return;
+  if (!gasConfig.autoSync || !getGasConnectionMode()) return;
   clearTimeout(gasSaveTimer);
   gasSaveTimer = setTimeout(() => gasSave({ silent: true }), 1800);
 }
 
 function ensureGasReady({ openSettings = true } = {}) {
-  if (gasConfig.url && isValidGasUrl(gasConfig.url)) return true;
+  if (getGasConnectionMode()) return true;
   $("#saveStatus").textContent = "GAS未設定";
   if (openSettings) openGasDialog();
-  else alert("先にGASのWebアプリURLを設定してください。");
+  else alert("Vercelの環境変数、またはGASのWebアプリURLを設定してください。");
   return false;
+}
+
+function getGasConnectionMode() {
+  if (gasConfig.url && isValidGasUrl(gasConfig.url)) return "direct";
+  if (gasProxyAvailable || isVercelHost()) return "vercel";
+  return "";
+}
+
+function canUseVercelGasProxy() {
+  if (!window.location || !window.location.origin.startsWith("http")) return false;
+  const hostname = window.location.hostname;
+  return !["", "localhost", "127.0.0.1", "0.0.0.0"].includes(hostname);
+}
+
+function isVercelHost() {
+  const hostname = window.location?.hostname || "";
+  return hostname.endsWith(".vercel.app") || hostname.endsWith(".vercel.sh");
+}
+
+async function detectVercelGasProxyConfig() {
+  if (!canUseVercelGasProxy() || gasConfig.url) return;
+
+  try {
+    const result = await gasProxyRequest("config", { timeoutMs: 4000 });
+    if (!result.configured) return;
+    gasProxyAvailable = true;
+    if (hasStoredGasConfig) return;
+    gasConfig.autoSync = true;
+    saveGasConfig();
+    $("#saveStatus").textContent = "Vercel GAS設定を使用";
+  } catch {
+    // APIがない公開先では、従来通り手動URL設定を使います。
+  }
+}
+
+async function gasProxyRequest(action, { method = "GET", payload = null, timeoutMs = 15000 } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const url = new URL(VERCEL_GAS_ENDPOINT, window.location.origin);
+  url.searchParams.set("action", action);
+
+  try {
+    const response = await fetch(url.toString(), {
+      method,
+      headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+      body: method === "POST" ? JSON.stringify(payload) : undefined,
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    const result = text ? JSON.parse(text) : {};
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || `Vercel APIでGAS連携に失敗しました。(${response.status})`);
+    }
+    return result;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Vercel APIからの応答がありませんでした。GAS設定を確認してください。");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function gasJsonp(action, params = {}, timeoutMs = 15000) {
@@ -543,6 +613,7 @@ function loadGasConfig() {
   try {
     const raw = localStorage.getItem(GAS_CONFIG_KEY);
     if (raw) {
+      hasStoredGasConfig = true;
       const parsed = JSON.parse(raw);
       return {
         url: String(parsed.url || ""),

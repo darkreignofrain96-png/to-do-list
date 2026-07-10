@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>To do List | 日課・四象限・ガント</title>
-    <link rel="stylesheet" href="styles.css?v=20260708-3" />
+    <link rel="stylesheet" href="styles.css?v=20260709-1" />
     <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script defer src="app.js?v=20260708-3"></script>
+    <script defer src="app.js?v=20260709-1"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -392,7 +392,7 @@
         </label>
 
         <div class="settings-note">
-          Apps Scriptを「ウェブアプリ」としてデプロイし、発行されたURLをここに貼り付けます。
+          Vercelでは空欄のままでOKです。Vercelの環境変数 `GAS_WEB_APP_URL` にApps ScriptのWebアプリURLを設定すると、同じドメインのAPI経由で保存・読込します。ローカル利用やGitHub Pages利用ではURLをここに貼り付けます。
         </div>
 
         <div class="dialog-actions">

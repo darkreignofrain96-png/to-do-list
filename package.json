@@ -1,0 +1,10 @@
+{
+  "name": "todo-list-tool",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily routines, Eisenhower matrix tasks, focus tasks, and Gantt chart in a browser-based To do tool.",
+  "scripts": {
+    "start": "python -m http.server 8765",
+    "check": "node --check app.js && node --check api/gas.js"
+  }
+}
