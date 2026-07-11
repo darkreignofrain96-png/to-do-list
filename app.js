@@ -44,6 +44,7 @@ let saveTimer = null;
 let gasSaveTimer = null;
 let preferredProjectId = "";
 let gasProxyAvailable = false;
+let pointerTaskDrag = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -73,6 +74,7 @@ function bindEvents() {
   $("#todayTaskPickerForm").addEventListener("submit", handleTodayTaskPick);
   $("#todayQuadrantPicker").addEventListener("change", renderTodayTaskPicker);
   $("#routineForm").addEventListener("submit", handleRoutineSubmit);
+  $("#routineDialogForm").addEventListener("submit", handleRoutineDialogSubmit);
   $("#projectForm").addEventListener("submit", handleProjectSubmit);
   $("#taskDialogForm").addEventListener("submit", handleTaskDialogSubmit);
   $("#gasForm").addEventListener("submit", handleGasSettingsSubmit);
@@ -102,6 +104,10 @@ function bindEvents() {
   document.addEventListener("dragover", handleDragOver);
   document.addEventListener("dragleave", handleDragLeave);
   document.addEventListener("drop", handleDrop);
+  document.addEventListener("pointerdown", handleTaskPointerDown);
+  document.addEventListener("pointermove", handleTaskPointerMove);
+  document.addEventListener("pointerup", handleTaskPointerUp);
+  document.addEventListener("pointercancel", cancelTaskPointerDrag);
 }
 
 function handleDocumentClick(event) {
@@ -129,8 +135,13 @@ function handleDocumentClick(event) {
     $("#routineForm").classList.toggle("is-collapsed");
     $("#routineForm input[name='title']").focus();
   }
+  if (action === "edit-routine") openRoutineDialog(id);
+  if (action === "move-routine-up") moveRoutine(id, -1);
+  if (action === "move-routine-down") moveRoutine(id, 1);
+  if (action === "close-routine-dialog") closeRoutineDialog();
 
   if (action === "new-task") openTaskDialog("", { projectId: currentProjectIdForNewTask() });
+  if (action === "new-task-for-quadrant") openTaskDialog("", { projectId: currentProjectIdForNewTask(), quadrant: id });
   if (action === "new-task-for-project") openTaskDialog("", { projectId: id });
   if (action === "edit-task") openTaskDialog(id);
   if (action === "remove-from-today") removeTaskFromToday(id);
@@ -147,9 +158,15 @@ function handleDocumentClick(event) {
 
   if (action === "delete-routine") {
     if (confirm("この日課を削除しますか？")) {
-      state.routines = state.routines.filter((routine) => routine.id !== id);
-      Object.values(state.routineLog).forEach((dayLog) => delete dayLog[id]);
-      saveAndRender();
+      deleteRoutine(id);
+    }
+  }
+
+  if (action === "delete-routine-current") {
+    const routineId = $("#routineDialogForm").elements.id.value;
+    if (routineId && confirm("この日課を削除しますか？")) {
+      deleteRoutine(routineId);
+      closeRoutineDialog();
     }
   }
 
@@ -198,6 +215,14 @@ function handleDocumentChange(event) {
 }
 
 function handleDragStart(event) {
+  const routineCard = event.target.closest("[data-routine-id]");
+  if (routineCard) {
+    event.dataTransfer.setData("application/x-routine-id", routineCard.dataset.routineId);
+    event.dataTransfer.effectAllowed = "move";
+    routineCard.classList.add("dragging");
+    return;
+  }
+
   const card = event.target.closest("[data-task-id]");
   if (!card) return;
   event.dataTransfer.setData("text/plain", card.dataset.taskId);
@@ -206,12 +231,25 @@ function handleDragStart(event) {
 }
 
 function handleDragEnd(event) {
+  const routineCard = event.target.closest("[data-routine-id]");
+  if (routineCard) routineCard.classList.remove("dragging");
+  $$(".routine-item").forEach((item) => item.classList.remove("is-over"));
+
   const card = event.target.closest("[data-task-id]");
   if (card) card.classList.remove("dragging");
   $$(".quadrant-column").forEach((column) => column.classList.remove("is-over"));
 }
 
 function handleDragOver(event) {
+  if (isRoutineDrag(event)) {
+    const routineItem = event.target.closest("[data-routine-id]");
+    const routineList = event.target.closest("#routineList");
+    if (!routineItem && !routineList) return;
+    event.preventDefault();
+    $$(".routine-item").forEach((item) => item.classList.toggle("is-over", item === routineItem));
+    return;
+  }
+
   const column = event.target.closest("[data-quadrant]");
   if (!column) return;
   event.preventDefault();
@@ -219,22 +257,137 @@ function handleDragOver(event) {
 }
 
 function handleDragLeave(event) {
+  const routineItem = event.target.closest("[data-routine-id]");
+  if (routineItem && !routineItem.contains(event.relatedTarget)) {
+    routineItem.classList.remove("is-over");
+  }
+
   const column = event.target.closest("[data-quadrant]");
   if (!column || column.contains(event.relatedTarget)) return;
   column.classList.remove("is-over");
 }
 
 function handleDrop(event) {
+  const routineId = event.dataTransfer.getData("application/x-routine-id");
+  if (routineId) {
+    const target = event.target.closest("[data-routine-id]");
+    const list = event.target.closest("#routineList");
+    if (!target && !list) return;
+    event.preventDefault();
+    reorderRoutineByDrop(routineId, target, event.clientY);
+    $$(".routine-item").forEach((item) => item.classList.remove("is-over"));
+    return;
+  }
+
   const column = event.target.closest("[data-quadrant]");
   if (!column) return;
   event.preventDefault();
   const task = findTask(event.dataTransfer.getData("text/plain"));
   if (!task) return;
-  const meta = quadrantMeta[column.dataset.quadrant];
-  task.quadrant = column.dataset.quadrant;
+  moveTaskToQuadrant(task, column.dataset.quadrant);
+  saveAndRender("象限を移動しました");
+}
+
+function handleTaskPointerDown(event) {
+  if (event.button !== undefined && event.button !== 0) return;
+  if (event.target.closest("button, input, select, textarea, a, label")) return;
+
+  const card = event.target.closest("#quadrantBoard [data-task-id]");
+  if (!card) return;
+
+  pointerTaskDrag = {
+    id: card.dataset.taskId,
+    startX: event.clientX,
+    startY: event.clientY,
+    active: false,
+  };
+}
+
+function handleTaskPointerMove(event) {
+  if (!pointerTaskDrag) return;
+
+  const distance = Math.hypot(event.clientX - pointerTaskDrag.startX, event.clientY - pointerTaskDrag.startY);
+  if (!pointerTaskDrag.active && distance < 8) return;
+
+  pointerTaskDrag.active = true;
+  const card = $(`#quadrantBoard [data-task-id="${cssEscape(pointerTaskDrag.id)}"]`);
+  if (card) card.classList.add("dragging");
+
+  const column = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-quadrant]");
+  $$(".quadrant-column").forEach((item) => item.classList.toggle("is-over", item === column));
+  event.preventDefault();
+}
+
+function handleTaskPointerUp(event) {
+  if (!pointerTaskDrag) return;
+
+  const drag = pointerTaskDrag;
+  pointerTaskDrag = null;
+
+  if (drag.active) {
+    const column = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-quadrant]");
+    const task = findTask(drag.id);
+    if (column && task && task.quadrant !== column.dataset.quadrant) {
+      moveTaskToQuadrant(task, column.dataset.quadrant);
+      saveAndRender("象限を移動しました");
+      return;
+    }
+  }
+
+  cancelTaskPointerDrag();
+}
+
+function cancelTaskPointerDrag() {
+  pointerTaskDrag = null;
+  $$("#quadrantBoard .task-card.dragging").forEach((card) => card.classList.remove("dragging"));
+  $$(".quadrant-column").forEach((column) => column.classList.remove("is-over"));
+}
+
+function moveTaskToQuadrant(task, quadrant) {
+  const meta = quadrantMeta[quadrant];
+  if (!meta) return;
+  task.quadrant = quadrant;
   task.important = meta.important;
   task.urgent = meta.urgent;
-  saveAndRender();
+}
+
+function isRoutineDrag(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("application/x-routine-id");
+}
+
+function moveRoutine(routineId, direction) {
+  const routines = sortedRoutines();
+  const index = routines.findIndex((routine) => routine.id === routineId);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= routines.length) return;
+
+  [routines[index], routines[nextIndex]] = [routines[nextIndex], routines[index]];
+  applyRoutineOrder(routines);
+  saveAndRender("日課の順番を更新しました");
+}
+
+function reorderRoutineByDrop(routineId, targetElement, clientY) {
+  const routines = sortedRoutines();
+  const draggedIndex = routines.findIndex((routine) => routine.id === routineId);
+  if (draggedIndex < 0) return;
+
+  const [dragged] = routines.splice(draggedIndex, 1);
+  if (!targetElement) {
+    routines.push(dragged);
+    applyRoutineOrder(routines);
+    saveAndRender("日課の順番を更新しました");
+    return;
+  }
+
+  const targetId = targetElement.dataset.routineId;
+  const targetIndex = routines.findIndex((routine) => routine.id === targetId);
+  if (targetIndex < 0 || targetId === routineId) return;
+
+  const rect = targetElement.getBoundingClientRect();
+  const insertAfter = clientY > rect.top + rect.height / 2;
+  routines.splice(targetIndex + (insertAfter ? 1 : 0), 0, dragged);
+  applyRoutineOrder(routines);
+  saveAndRender("日課の順番を更新しました");
 }
 
 function handleQuickTask(event) {
@@ -283,16 +436,34 @@ function handleRoutineSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
+  const title = String(data.get("title") || "").trim();
+  if (!title) return;
   state.routines.push({
     id: uid("routine"),
-    title: String(data.get("title")).trim(),
+    title,
     area: String(data.get("area") || ""),
     estimateMinutes: Number(data.get("minutes") || 0),
     createdAt: todayISO(),
+    order: nextRoutineOrder(),
   });
   form.reset();
   $("#routineForm").classList.add("is-collapsed");
   saveAndRender();
+}
+
+function handleRoutineDialogSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const routine = findRoutine(String(data.get("id") || ""));
+  const title = String(data.get("title") || "").trim();
+  if (!routine || !title) return;
+
+  routine.title = title;
+  routine.area = String(data.get("area") || "");
+  routine.estimateMinutes = Number(data.get("minutes") || 0);
+  closeRoutineDialog();
+  saveAndRender("日課を更新しました");
 }
 
 function handleProjectSubmit(event) {
@@ -753,12 +924,16 @@ function renderRoutines() {
     return;
   }
 
-  root.innerHTML = state.routines
-    .map((routine) => {
+  const routines = sortedRoutines();
+  root.innerHTML = routines
+    .map((routine, index) => {
       const done = isRoutineDone(routine.id, state.selectedDate);
       const streak = computeStreak(routine.id, state.selectedDate);
       return `
-        <article class="routine-item">
+        <article class="routine-item" draggable="true" data-routine-id="${escapeAttr(routine.id)}">
+          <span class="routine-drag-handle" title="ドラッグして並べ替え">
+            <i data-lucide="grip-vertical"></i>
+          </span>
           <input type="checkbox" data-routine-toggle="${escapeAttr(routine.id)}" ${done ? "checked" : ""} aria-label="${escapeAttr(routine.title)}" />
           <div>
             <div class="routine-title">${escapeHtml(routine.title)}</div>
@@ -769,6 +944,15 @@ function renderRoutines() {
             </div>
           </div>
           <div class="routine-actions">
+            <button type="button" data-action="move-routine-up" data-id="${escapeAttr(routine.id)}" title="上へ" ${index === 0 ? "disabled" : ""}>
+              <i data-lucide="arrow-up"></i>
+            </button>
+            <button type="button" data-action="move-routine-down" data-id="${escapeAttr(routine.id)}" title="下へ" ${index === routines.length - 1 ? "disabled" : ""}>
+              <i data-lucide="arrow-down"></i>
+            </button>
+            <button type="button" data-action="edit-routine" data-id="${escapeAttr(routine.id)}" title="編集">
+              <i data-lucide="pencil"></i>
+            </button>
             <button type="button" data-action="delete-routine" data-id="${escapeAttr(routine.id)}" title="削除">
               <i data-lucide="trash-2"></i>
             </button>
@@ -846,7 +1030,12 @@ function renderQuadrants() {
               <h3>${meta.label} ${meta.text}</h3>
               <p>${meta.hint}</p>
             </div>
-            <span class="pill">${tasks.length}</span>
+            <div class="quadrant-tools">
+              <span class="pill">${tasks.length}</span>
+              <button class="icon-only" type="button" data-action="new-task-for-quadrant" data-id="${escapeAttr(key)}" title="${escapeAttr(meta.label)}にTo doを追加">
+                <i data-lucide="plus"></i>
+              </button>
+            </div>
           </div>
           <div class="task-stack">
             ${tasks.length ? tasks.map((task) => renderTaskCard(task)).join("") : `<div class="empty">空です</div>`}
@@ -1015,6 +1204,29 @@ function removeTaskFromToday(taskId) {
   saveAndRender("今日から外しました");
 }
 
+function openRoutineDialog(routineId) {
+  const routine = findRoutine(routineId);
+  if (!routine) return;
+
+  const form = $("#routineDialogForm");
+  form.elements.id.value = routine.id;
+  form.elements.title.value = routine.title;
+  form.elements.area.value = routine.area || "";
+  form.elements.minutes.value = routine.estimateMinutes || "";
+
+  const dialog = $("#routineDialog");
+  if (dialog.showModal) dialog.showModal();
+  else dialog.setAttribute("open", "");
+  form.elements.title.focus();
+  refreshIcons();
+}
+
+function closeRoutineDialog() {
+  const dialog = $("#routineDialog");
+  if (dialog.close) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
 function openTaskDialog(taskId = "", defaults = {}) {
   const form = $("#taskDialogForm");
   const task = findTask(taskId) || {
@@ -1157,6 +1369,32 @@ function findTask(id) {
   return state.tasks.find((task) => task.id === id);
 }
 
+function findRoutine(id) {
+  return state.routines.find((routine) => routine.id === id);
+}
+
+function deleteRoutine(id) {
+  state.routines = state.routines.filter((routine) => routine.id !== id);
+  Object.values(state.routineLog).forEach((dayLog) => delete dayLog[id]);
+  applyRoutineOrder(sortedRoutines());
+  saveAndRender("日課を削除しました");
+}
+
+function sortedRoutines() {
+  return state.routines.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || String(a.title).localeCompare(String(b.title), "ja"));
+}
+
+function applyRoutineOrder(orderedRoutines) {
+  const orderById = new Map(orderedRoutines.map((routine, index) => [routine.id, index]));
+  state.routines.forEach((routine) => {
+    routine.order = orderById.get(routine.id) ?? routine.order ?? 0;
+  });
+}
+
+function nextRoutineOrder() {
+  return state.routines.reduce((max, routine) => Math.max(max, Number(routine.order || 0)), -1) + 1;
+}
+
 function quadrantFromBooleans(important, urgent) {
   if (important && urgent) return "q1";
   if (important && !urgent) return "q2";
@@ -1258,11 +1496,11 @@ function defaultState() {
       makeTask("初回ヒアリングの質問を作る", "proj-business", true, true, "A", addDays(today, 1), addDays(today, 8), 75, 0, "目的・現状・制約・理想状態"),
     ],
     routines: [
-      makeRoutine("起床後の水分補給", "健康・体力", 3),
-      makeRoutine("朝の自己宣言を読む", "自己実現基盤", 5),
-      makeRoutine("30分運動", "健康・体力", 30),
-      makeRoutine("15分振り返り", "自己実現基盤", 15),
-      makeRoutine("就寝前スマホオフ", "健康・体力", 10),
+      makeRoutine("起床後の水分補給", "健康・体力", 3, 0),
+      makeRoutine("朝の自己宣言を読む", "自己実現基盤", 5, 1),
+      makeRoutine("30分運動", "健康・体力", 30, 2),
+      makeRoutine("15分振り返り", "自己実現基盤", 15, 3),
+      makeRoutine("就寝前スマホオフ", "健康・体力", 10, 4),
     ],
     routineLog: {},
     dailyReviews: {
@@ -1297,13 +1535,14 @@ function makeTask(title, projectId, important, urgent, priority, startDate, dueD
   };
 }
 
-function makeRoutine(title, area, estimateMinutes) {
+function makeRoutine(title, area, estimateMinutes, order = 0) {
   return {
     id: uid("routine"),
     title,
     area,
     estimateMinutes,
     createdAt: todayISO(),
+    order,
   };
 }
 
@@ -1313,7 +1552,7 @@ function normalizeState(input) {
     selectedDate: normalizeDate(input.selectedDate) || todayISO(),
     projects: Array.isArray(input.projects) ? input.projects.map(normalizeProject).filter(Boolean) : fallback.projects,
     tasks: Array.isArray(input.tasks) ? input.tasks.map(normalizeTask).filter(Boolean) : fallback.tasks,
-    routines: Array.isArray(input.routines) ? input.routines.map(normalizeRoutine).filter(Boolean) : fallback.routines,
+    routines: normalizeRoutineOrder(Array.isArray(input.routines) ? input.routines.map(normalizeRoutine).filter(Boolean) : fallback.routines),
     routineLog: input.routineLog && typeof input.routineLog === "object" ? input.routineLog : {},
     dailyReviews: input.dailyReviews && typeof input.dailyReviews === "object" ? input.dailyReviews : {},
   };
@@ -1366,7 +1605,18 @@ function normalizeRoutine(routine) {
     area: String(routine.area || ""),
     estimateMinutes: Number(routine.estimateMinutes || 0),
     createdAt: normalizeDate(routine.createdAt) || todayISO(),
+    order: Number.isFinite(Number(routine.order)) ? Number(routine.order) : null,
   };
+}
+
+function normalizeRoutineOrder(routines) {
+  return routines
+    .map((routine, index) => ({
+      ...routine,
+      order: Number.isFinite(Number(routine.order)) ? Number(routine.order) : index,
+    }))
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0) || String(a.createdAt || "").localeCompare(String(b.createdAt || "")) || String(a.title).localeCompare(String(b.title), "ja"))
+    .map((routine, index) => ({ ...routine, order: index }));
 }
 
 function exportSpreadsheet() {
@@ -1413,8 +1663,8 @@ function buildSheetData() {
       }),
     ],
     Routines: [
-      ["Routine ID", "日課", "領域", "見積分", "作成日"],
-      ...state.routines.map((routine) => [routine.id, routine.title, routine.area, routine.estimateMinutes, routine.createdAt]),
+      ["Routine ID", "日課", "領域", "見積分", "並び順", "作成日"],
+      ...sortedRoutines().map((routine) => [routine.id, routine.title, routine.area, routine.estimateMinutes, routine.order, routine.createdAt]),
     ],
     RoutineLog: [
       ["日付", "Routine ID", "ステータス"],
@@ -1522,6 +1772,7 @@ function stateFromWorkbookRows(workbookRows) {
         title: row["日課"],
         area: row["領域"],
         estimateMinutes: row["見積分"],
+        order: row["並び順"],
         createdAt: row["作成日"],
       }),
     )
@@ -1759,6 +2010,11 @@ function escapeAttr(value) {
   return escapeHtml(value);
 }
 
+function cssEscape(value) {
+  if (window.CSS?.escape) return CSS.escape(String(value));
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
 function xmlEscape(value) {
   return escapeHtml(value);
 }
@@ -1773,11 +2029,14 @@ function refreshIcons() {
     "calendar-days": "D",
     "calendar-plus": "+",
     "calendar-x": "x",
+    "arrow-down": "v",
+    "arrow-up": "^",
     "cloud-download": "↓",
     "cloud-upload": "↑",
     "download-cloud": "↓",
     "folder-plus": "+",
     "gantt-chart-square": "G",
+    "grip-vertical": "::",
     "layout-grid": "▦",
     "list-checks": "✓",
     pencil: "✎",

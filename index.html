@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>To do List | 日課・四象限・ガント</title>
-    <link rel="stylesheet" href="styles.css?v=20260709-1" />
+    <link rel="stylesheet" href="styles.css?v=20260711-3" />
     <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script defer src="app.js?v=20260709-1"></script>
+    <script defer src="app.js?v=20260711-3"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -268,6 +268,51 @@
     </div>
 
     <input id="spreadsheetInput" class="visually-hidden" type="file" accept=".xlsx,.xls,.xml,.json" />
+
+    <dialog id="routineDialog" class="settings-dialog">
+      <form id="routineDialogForm" method="dialog">
+        <input type="hidden" name="id" />
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">Routine</p>
+            <h2>日課編集</h2>
+          </div>
+          <button class="icon-only" type="button" data-action="close-routine-dialog" title="閉じる">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+
+        <label class="field stretch">
+          <span>日課</span>
+          <input name="title" type="text" required />
+        </label>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>領域</span>
+            <input name="area" type="text" />
+          </label>
+          <label class="field">
+            <span>見積分</span>
+            <input name="minutes" type="number" min="0" step="5" />
+          </label>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="danger-btn" type="button" data-action="delete-routine-current">
+            <i data-lucide="trash-2"></i>
+            <span>削除</span>
+          </button>
+          <div>
+            <button class="ghost-btn" type="button" data-action="close-routine-dialog">キャンセル</button>
+            <button class="primary-btn" type="submit">
+              <i data-lucide="save"></i>
+              <span>保存</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="taskDialog" class="task-dialog">
       <form id="taskDialogForm" method="dialog">
