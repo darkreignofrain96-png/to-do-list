@@ -54,6 +54,7 @@ init();
 function init() {
   bindEvents();
   render();
+  updateStickyOffsets();
   detectVercelGasProxyConfig();
 }
 
@@ -108,6 +109,7 @@ function bindEvents() {
   document.addEventListener("pointermove", handleTaskPointerMove);
   document.addEventListener("pointerup", handleTaskPointerUp);
   document.addEventListener("pointercancel", cancelTaskPointerDrag);
+  window.addEventListener("resize", updateStickyOffsets);
 }
 
 function handleDocumentClick(event) {
@@ -144,6 +146,7 @@ function handleDocumentClick(event) {
   if (action === "new-task-for-quadrant") openTaskDialog("", { projectId: currentProjectIdForNewTask(), quadrant: id });
   if (action === "new-task-for-project") openTaskDialog("", { projectId: id });
   if (action === "edit-task") openTaskDialog(id);
+  if (action === "toggle-task-status") toggleTaskStatus(id);
   if (action === "remove-from-today") removeTaskFromToday(id);
   if (action === "close-dialog") closeTaskDialog();
 
@@ -284,8 +287,10 @@ function handleDrop(event) {
   event.preventDefault();
   const task = findTask(event.dataTransfer.getData("text/plain"));
   if (!task) return;
-  moveTaskToQuadrant(task, column.dataset.quadrant);
-  saveAndRender("象限を移動しました");
+  const targetCard = event.target.closest("#quadrantBoard [data-task-id]");
+  if (reorderTaskByDrop(task.id, column.dataset.quadrant, targetCard, event.clientY)) {
+    saveAndRender("タスクの順番を更新しました");
+  }
 }
 
 function handleTaskPointerDown(event) {
@@ -325,11 +330,12 @@ function handleTaskPointerUp(event) {
   pointerTaskDrag = null;
 
   if (drag.active) {
-    const column = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-quadrant]");
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const column = target?.closest("[data-quadrant]");
+    const targetCard = target?.closest("#quadrantBoard [data-task-id]");
     const task = findTask(drag.id);
-    if (column && task && task.quadrant !== column.dataset.quadrant) {
-      moveTaskToQuadrant(task, column.dataset.quadrant);
-      saveAndRender("象限を移動しました");
+    if (column && task && reorderTaskByDrop(task.id, column.dataset.quadrant, targetCard, event.clientY)) {
+      saveAndRender("タスクの順番を更新しました");
       return;
     }
   }
@@ -349,6 +355,34 @@ function moveTaskToQuadrant(task, quadrant) {
   task.quadrant = quadrant;
   task.important = meta.important;
   task.urgent = meta.urgent;
+}
+
+function reorderTaskByDrop(taskId, targetQuadrant, targetElement, clientY) {
+  const task = findTask(taskId);
+  const meta = quadrantMeta[targetQuadrant];
+  if (!task || !meta) return false;
+
+  const sourceQuadrant = task.quadrant;
+  const previousOrder = task.order;
+  const targetId = targetElement?.dataset.taskId || "";
+  if (targetId === taskId && sourceQuadrant === targetQuadrant) return false;
+
+  const targetTasks = sortedQuadrantTasks(targetQuadrant, true).filter((item) => item.id !== taskId);
+  let insertIndex = targetTasks.length;
+  if (targetId) {
+    const targetIndex = targetTasks.findIndex((item) => item.id === targetId);
+    if (targetIndex >= 0) {
+      const rect = targetElement.getBoundingClientRect();
+      insertIndex = targetIndex + (clientY > rect.top + rect.height / 2 ? 1 : 0);
+    }
+  }
+
+  moveTaskToQuadrant(task, targetQuadrant);
+  targetTasks.splice(insertIndex, 0, task);
+  applyTaskOrder(targetTasks);
+  if (sourceQuadrant !== targetQuadrant) applyTaskOrder(sortedQuadrantTasks(sourceQuadrant, true));
+
+  return sourceQuadrant !== targetQuadrant || previousOrder !== task.order;
 }
 
 function isRoutineDrag(event) {
@@ -396,11 +430,12 @@ function handleQuickTask(event) {
   const data = new FormData(form);
   const important = Boolean(data.get("important"));
   const urgent = Boolean(data.get("urgent"));
+  const quadrant = quadrantFromBooleans(important, urgent);
   state.tasks.unshift({
     id: uid("task"),
     title: String(data.get("title")).trim(),
     projectId: String(data.get("projectId") || ""),
-    quadrant: quadrantFromBooleans(important, urgent),
+    quadrant,
     important,
     urgent,
     status: "未着手",
@@ -413,6 +448,7 @@ function handleQuickTask(event) {
     createdAt: todayISO(),
     completedAt: "",
     focusDates: [],
+    order: nextTaskOrder(quadrant),
   });
   form.reset();
   form.elements.important.checked = true;
@@ -518,6 +554,7 @@ function handleTaskDialogSubmit(event) {
     createdAt: existing?.createdAt || todayISO(),
     completedAt: "",
     focusDates: existing?.focusDates || [],
+    order: existing && existing.quadrant === quadrant && hasOrder(existing.order) ? Number(existing.order) : nextTaskOrder(quadrant),
   };
   if (next.status === "完了" || next.progress >= 1) {
     next.status = "完了";
@@ -839,6 +876,7 @@ function render() {
   renderQuadrants();
   renderGantt();
   refreshIcons();
+  updateStickyOffsets();
 }
 
 function renderShell() {
@@ -866,6 +904,13 @@ function toggleSettingsPanel() {
   uiConfig.settingsOpen = !uiConfig.settingsOpen;
   saveUiConfig();
   renderSettingsPanel();
+  updateStickyOffsets();
+}
+
+function updateStickyOffsets() {
+  const topbar = $(".topbar");
+  if (!topbar) return;
+  document.documentElement.style.setProperty("--topbar-height", `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
 }
 
 function renderProjectOptions() {
@@ -1020,9 +1065,7 @@ function renderQuadrants() {
   const showDone = $("#showDone").checked;
   root.innerHTML = Object.entries(quadrantMeta)
     .map(([key, meta]) => {
-      const tasks = state.tasks
-        .filter((task) => task.quadrant === key && (showDone || task.status !== "完了"))
-        .sort(sortTasks);
+      const tasks = sortedQuadrantTasks(key, showDone);
       return `
         <section class="quadrant-column quadrant-${key}" data-quadrant="${key}">
           <div class="quadrant-head">
@@ -1173,7 +1216,7 @@ function renderTaskCard(task, isFocusContext = false) {
           <div class="task-title">${escapeHtml(task.title)}</div>
           <div class="task-meta">
             <span class="badge priority-${escapeAttr((task.priority || "B").toLowerCase())}">${escapeHtml(task.priority || "B")}</span>
-            <span class="badge status">${escapeHtml(task.status || "未着手")}</span>
+            ${renderTaskStatusBadge(task)}
             ${project ? `<span class="badge project" style="border-left-color:${escapeAttr(project.color)}">${escapeHtml(project.name)}</span>` : ""}
             <span>${dueText}</span>
             ${task.estimateMinutes ? `<span>${task.estimateMinutes}分</span>` : ""}
@@ -1197,11 +1240,42 @@ function renderTaskCard(task, isFocusContext = false) {
   `;
 }
 
+function renderTaskStatusBadge(task) {
+  const status = task.status || "未着手";
+  const className = `badge status status-${statusClass(status)}`;
+  if (status === "完了") {
+    return `<span class="${className}">${escapeHtml(status)}</span>`;
+  }
+  return `
+    <button class="${className}" type="button" data-action="toggle-task-status" data-id="${escapeAttr(task.id)}" title="未着手 / 進行中を切り替え">
+      ${escapeHtml(status)}
+    </button>
+  `;
+}
+
+function statusClass(status) {
+  if (status === "進行中") return "in-progress";
+  if (status === "完了") return "done";
+  if (status === "保留") return "paused";
+  return "not-started";
+}
+
 function removeTaskFromToday(taskId) {
   const task = findTask(taskId);
   if (!task || !Array.isArray(task.focusDates)) return;
   task.focusDates = task.focusDates.filter((date) => date !== state.selectedDate);
   saveAndRender("今日から外しました");
+}
+
+function toggleTaskStatus(taskId) {
+  const task = findTask(taskId);
+  if (!task || task.status === "完了") return;
+
+  task.status = task.status === "進行中" ? "未着手" : "進行中";
+  if (task.status === "進行中" && task.progress <= 0) task.progress = 0.1;
+  if (task.status === "未着手") task.progress = 0;
+  task.completedAt = "";
+  saveAndRender("ステータスを更新しました");
 }
 
 function openRoutineDialog(routineId) {
@@ -1373,6 +1447,27 @@ function findRoutine(id) {
   return state.routines.find((routine) => routine.id === id);
 }
 
+function sortedQuadrantTasks(quadrant, showDone = false) {
+  return state.tasks
+    .filter((task) => task.quadrant === quadrant && (showDone || task.status !== "完了"))
+    .sort(sortTasksByOrder);
+}
+
+function sortTasksByOrder(a, b) {
+  return Number(a.order ?? 0) - Number(b.order ?? 0) || sortTasks(a, b);
+}
+
+function applyTaskOrder(orderedTasks) {
+  orderedTasks.forEach((task, index) => {
+    task.order = index;
+  });
+}
+
+function nextTaskOrder(quadrant = "") {
+  const sameQuadrant = state.tasks.filter((task) => !quadrant || task.quadrant === quadrant);
+  return sameQuadrant.reduce((max, task) => Math.max(max, Number(task.order ?? -1)), -1) + 1;
+}
+
 function deleteRoutine(id) {
   state.routines = state.routines.filter((routine) => routine.id !== id);
   Object.values(state.routineLog).forEach((dayLog) => delete dayLog[id]);
@@ -1444,7 +1539,7 @@ function loadState() {
   } catch {
     localStorage.removeItem(STORAGE_KEY);
   }
-  return defaultState();
+  return normalizeState(defaultState());
 }
 
 function defaultState() {
@@ -1532,6 +1627,7 @@ function makeTask(title, projectId, important, urgent, priority, startDate, dueD
     createdAt: todayISO(),
     completedAt: "",
     focusDates: [],
+    order: null,
   };
 }
 
@@ -1551,7 +1647,7 @@ function normalizeState(input) {
   return {
     selectedDate: normalizeDate(input.selectedDate) || todayISO(),
     projects: Array.isArray(input.projects) ? input.projects.map(normalizeProject).filter(Boolean) : fallback.projects,
-    tasks: Array.isArray(input.tasks) ? input.tasks.map(normalizeTask).filter(Boolean) : fallback.tasks,
+    tasks: normalizeTaskOrder(Array.isArray(input.tasks) ? input.tasks.map(normalizeTask).filter(Boolean) : fallback.tasks),
     routines: normalizeRoutineOrder(Array.isArray(input.routines) ? input.routines.map(normalizeRoutine).filter(Boolean) : fallback.routines),
     routineLog: input.routineLog && typeof input.routineLog === "object" ? input.routineLog : {},
     dailyReviews: input.dailyReviews && typeof input.dailyReviews === "object" ? input.dailyReviews : {},
@@ -1594,7 +1690,30 @@ function normalizeTask(task) {
     createdAt: normalizeDate(task.createdAt) || todayISO(),
     completedAt: normalizeDate(task.completedAt) || "",
     focusDates: normalizeDateList(task.focusDates),
+    order: hasOrder(task.order) ? Number(task.order) : null,
   };
+}
+
+function normalizeTaskOrder(tasks) {
+  const groups = new Map();
+  tasks.forEach((task, index) => {
+    if (!hasOrder(task.order)) task.order = index;
+    const key = task.quadrant || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(task);
+  });
+
+  groups.forEach((group) => {
+    group.sort(sortTasksByOrder).forEach((task, index) => {
+      task.order = index;
+    });
+  });
+
+  return tasks;
+}
+
+function hasOrder(order) {
+  return order !== null && order !== "" && Number.isFinite(Number(order));
 }
 
 function normalizeRoutine(routine) {
@@ -1638,7 +1757,7 @@ function exportSpreadsheet() {
 function buildSheetData() {
   return {
     Tasks: [
-      ["Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "重要", "緊急", "ステータス", "優先度", "開始日", "期限", "見積分", "進捗", "今日扱う日", "メモ", "作成日", "完了日"],
+      ["Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "重要", "緊急", "ステータス", "優先度", "開始日", "期限", "見積分", "進捗", "今日扱う日", "並び順", "メモ", "作成日", "完了日"],
       ...state.tasks.map((task) => {
         const project = state.projects.find((item) => item.id === task.projectId);
         return [
@@ -1656,6 +1775,7 @@ function buildSheetData() {
           task.estimateMinutes,
           task.progress,
           (task.focusDates || []).join(";"),
+          task.order,
           task.notes,
           task.createdAt,
           task.completedAt,
@@ -1758,6 +1878,7 @@ function stateFromWorkbookRows(workbookRows) {
         estimateMinutes: row["見積分"],
         progress: row["進捗"],
         focusDates: row["今日扱う日"],
+        order: row["並び順"],
         notes: row["メモ"],
         createdAt: row["作成日"],
         completedAt: row["完了日"],
