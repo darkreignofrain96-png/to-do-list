@@ -585,6 +585,126 @@ main {
   border-color: var(--line-soft);
 }
 
+.routine-progress-scroll {
+  overflow-x: auto;
+}
+
+.routine-progress-table {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: separate;
+  border-spacing: 0 8px;
+}
+
+.routine-progress-table th,
+.routine-progress-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.routine-progress-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.routine-progress-table tbody th,
+.routine-progress-table tbody td {
+  background: #f8fafc;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.routine-progress-table tbody th {
+  width: 28%;
+  border-left: 1px solid var(--line-soft);
+  border-radius: 8px 0 0 8px;
+}
+
+.routine-progress-table tbody td:last-child {
+  border-right: 1px solid var(--line-soft);
+  border-radius: 0 8px 8px 0;
+}
+
+.routine-progress-table strong {
+  display: inline-block;
+  min-width: 2ch;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.routine-progress-table td > span {
+  margin-left: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.routine-progress-title,
+.routine-progress-sub {
+  display: block;
+}
+
+.routine-progress-title {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.routine-progress-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.routine-ratio {
+  display: grid;
+  gap: 6px;
+  min-width: 90px;
+}
+
+.routine-ratio > span:first-child {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.routine-meter {
+  height: 7px;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+
+.routine-meter span {
+  display: block;
+  height: 100%;
+  background: var(--teal);
+}
+
+.routine-days {
+  display: grid;
+  grid-template-columns: repeat(14, 10px);
+  gap: 5px;
+  align-items: center;
+}
+
+.routine-day {
+  width: 10px;
+  height: 10px;
+  background: #d7dee8;
+  border-radius: 3px;
+}
+
+.routine-day.is-done {
+  background: var(--green);
+}
+
+.routine-day.is-today {
+  outline: 2px solid rgba(37, 99, 235, 0.32);
+  outline-offset: 2px;
+}
+
 .task-card {
   display: grid;
   gap: 10px;

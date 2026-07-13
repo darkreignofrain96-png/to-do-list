@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>To do List | 日課・四象限・ガント</title>
-    <link rel="stylesheet" href="styles.css?v=20260711-6" />
+    <link rel="stylesheet" href="styles.css?v=20260713-1" />
     <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script defer src="app.js?v=20260711-6"></script>
+    <script defer src="app.js?v=20260713-1"></script>
   </head>
   <body>
     <div class="app-shell">
@@ -211,6 +211,17 @@
 
                 <div id="focusTaskList" class="task-stack"></div>
               </div>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading tight">
+                <div>
+                  <p class="eyebrow">Routine Streak</p>
+                  <h2>日課の継続状況</h2>
+                </div>
+                <span id="routineProgressSummary" class="pill">0日</span>
+              </div>
+              <div id="routineProgressTable"></div>
             </section>
           </div>
         </section>

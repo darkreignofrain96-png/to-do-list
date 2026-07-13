@@ -871,6 +871,7 @@ function render() {
   renderDaily();
   renderMetrics();
   renderRoutines();
+  renderRoutineProgress();
   renderTodayTaskPicker();
   renderFocusTasks();
   renderQuadrants();
@@ -1006,6 +1007,88 @@ function renderRoutines() {
       `;
     })
     .join("");
+}
+
+function renderRoutineProgress() {
+  const root = $("#routineProgressTable");
+  const summary = $("#routineProgressSummary");
+  if (!root || !summary) return;
+
+  if (!state.routines.length) {
+    summary.textContent = "0日";
+    root.innerHTML = `<div class="empty">日課を追加すると継続状況が出ます</div>`;
+    return;
+  }
+
+  const rows = sortedRoutines().map((routine) => ({
+    routine,
+    stats: computeRoutineStats(routine.id, state.selectedDate),
+  }));
+  const maxCurrent = rows.reduce((max, row) => Math.max(max, row.stats.currentStreak), 0);
+  summary.textContent = `最長 ${maxCurrent}日`;
+
+  root.innerHTML = `
+    <div class="routine-progress-scroll">
+      <table class="routine-progress-table">
+        <thead>
+          <tr>
+            <th scope="col">日課</th>
+            <th scope="col">現在</th>
+            <th scope="col">最長</th>
+            <th scope="col">直近7日</th>
+            <th scope="col">直近30日</th>
+            <th scope="col">合計</th>
+            <th scope="col">直近14日</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(({ routine, stats }) => {
+              const sub = [routine.area, routine.estimateMinutes ? `${routine.estimateMinutes}分` : ""].filter(Boolean).join(" / ");
+              return `
+                <tr>
+                  <th scope="row">
+                    <span class="routine-progress-title">${escapeHtml(routine.title)}</span>
+                    ${sub ? `<span class="routine-progress-sub">${escapeHtml(sub)}</span>` : ""}
+                  </th>
+                  <td><strong>${stats.currentStreak}</strong><span>日</span></td>
+                  <td><strong>${stats.bestStreak}</strong><span>日</span></td>
+                  <td>${renderRoutineRatio(stats.done7, 7)}</td>
+                  <td>${renderRoutineRatio(stats.done30, 30)}</td>
+                  <td><strong>${stats.totalDone}</strong><span>日</span></td>
+                  <td>${renderRoutineDayDots(routine.id, state.selectedDate, 14)}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderRoutineRatio(done, days) {
+  const pct = Math.round((done / days) * 100);
+  return `
+    <div class="routine-ratio">
+      <span>${done} / ${days}</span>
+      <span class="routine-meter" aria-hidden="true"><span style="width:${pct}%"></span></span>
+    </div>
+  `;
+}
+
+function renderRoutineDayDots(routineId, fromDate, days) {
+  return `
+    <div class="routine-days">
+      ${dateWindow(fromDate, days)
+        .map((date) => {
+          const done = isRoutineDone(routineId, date);
+          const label = `${date}: ${done ? "完了" : "未完了"}`;
+          return `<span class="routine-day ${done ? "is-done" : ""} ${date === fromDate ? "is-today" : ""}" title="${escapeAttr(label)}"></span>`;
+        })
+        .join("")}
+    </div>
+  `;
 }
 
 function renderTodayTaskPicker() {
@@ -1437,6 +1520,45 @@ function computeStreak(routineId, fromDate) {
     cursor = addDays(cursor, -1);
   }
   return count;
+}
+
+function computeRoutineStats(routineId, fromDate) {
+  const doneDates = routineDoneDates(routineId);
+  return {
+    currentStreak: computeStreak(routineId, fromDate),
+    bestStreak: computeBestStreak(doneDates),
+    done7: countRoutineDoneInWindow(routineId, fromDate, 7),
+    done30: countRoutineDoneInWindow(routineId, fromDate, 30),
+    totalDone: doneDates.length,
+  };
+}
+
+function routineDoneDates(routineId) {
+  return Object.keys(state.routineLog)
+    .filter((date) => normalizeDate(date) && isRoutineDone(routineId, date))
+    .sort();
+}
+
+function computeBestStreak(doneDates) {
+  let best = 0;
+  let run = 0;
+  let previous = "";
+
+  doneDates.forEach((date) => {
+    run = previous && date === addDays(previous, 1) ? run + 1 : 1;
+    best = Math.max(best, run);
+    previous = date;
+  });
+
+  return best;
+}
+
+function countRoutineDoneInWindow(routineId, fromDate, days) {
+  return dateWindow(fromDate, days).filter((date) => isRoutineDone(routineId, date)).length;
+}
+
+function dateWindow(fromDate, days) {
+  return Array.from({ length: days }, (_, index) => addDays(fromDate, index - days + 1));
 }
 
 function findTask(id) {
