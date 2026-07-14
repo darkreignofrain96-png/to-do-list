@@ -31,6 +31,7 @@ Vercelでは、アプリ画面にURLを貼り付けずに使えます。
 ## 作成されるシート
 
 - `Tasks`: タスク一覧
+- `FocusTasks`: 今日扱うタスクの日付別一覧
 - `Routines`: 日課一覧
 - `RoutineLog`: 日課の実行ログ
 - `Projects`: 目的 / プロジェクト一覧

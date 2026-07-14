@@ -1904,6 +1904,21 @@ function buildSheetData() {
         ];
       }),
     ],
+    FocusTasks: [
+      ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス"],
+      ...state.tasks.flatMap((task) => {
+        const project = state.projects.find((item) => item.id === task.projectId);
+        return (task.focusDates || []).map((date) => [
+          date,
+          task.id,
+          task.title,
+          task.projectId,
+          project?.name || "",
+          quadrantLabel(task.quadrant),
+          task.status,
+        ]);
+      }),
+    ],
     Routines: [
       ["Routine ID", "日課", "領域", "見積分", "並び順", "作成日"],
       ...sortedRoutines().map((routine) => [routine.id, routine.title, routine.area, routine.estimateMinutes, routine.order, routine.createdAt]),
@@ -1960,6 +1975,7 @@ async function readSpreadsheet(file) {
 function stateFromWorkbookRows(workbookRows) {
   const projectRows = rowsByName(workbookRows, ["Projects", "プロジェクト"]);
   const taskRows = rowsByName(workbookRows, ["Tasks", "タスク"]);
+  const focusTaskRows = rowsByName(workbookRows, ["FocusTasks", "今日扱うタスク"]);
   const routineRows = rowsByName(workbookRows, ["Routines", "日課"]);
   const routineLogRows = rowsByName(workbookRows, ["RoutineLog", "日課ログ"]);
   const reviewRows = rowsByName(workbookRows, ["DailyReview", "日次レビュー"]);
@@ -2007,6 +2023,15 @@ function stateFromWorkbookRows(workbookRows) {
       });
     })
     .filter(Boolean);
+
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  objectsFromRows(focusTaskRows).forEach((row) => {
+    const date = normalizeDate(row["日付"]);
+    const taskId = String(row["Task ID"] || "");
+    const task = tasksById.get(taskId);
+    if (!date || !task) return;
+    task.focusDates = uniqueDates([...(task.focusDates || []), date]);
+  });
 
   const routines = objectsFromRows(routineRows)
     .map((row) =>

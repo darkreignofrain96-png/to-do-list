@@ -1,6 +1,6 @@
 const APP_NAME = 'To do List';
 const APP_STATE_SHEET = 'AppState';
-const SHEET_NAMES = ['Tasks', 'Routines', 'RoutineLog', 'Projects', 'DailyReview'];
+const SHEET_NAMES = ['Tasks', 'FocusTasks', 'Routines', 'RoutineLog', 'Projects', 'DailyReview'];
 
 function doGet(e) {
   const action = (e.parameter.action || 'ping').toLowerCase();
