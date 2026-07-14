@@ -1982,13 +1982,14 @@ function buildSheetData() {
 }
 
 function buildRoutineProgressRows(baseDate) {
+  const progressBaseDate = normalizeDate(baseDate) || todayISO();
   return sortedRoutines().map((routine) => {
-    const stats = computeRoutineStats(routine.id, baseDate);
-    const recentDates = dateWindow(baseDate, 14);
+    const stats = computeRoutineStats(routine.id, progressBaseDate);
+    const recentDates = dateWindow(progressBaseDate, 14);
     const doneDates = recentDates.filter((date) => isRoutineDone(routine.id, date));
     const recentStatus = recentDates.map((date) => `${date}:${isRoutineDone(routine.id, date) ? "完了" : "未完了"}`).join(" / ");
     return [
-      baseDate,
+      progressBaseDate,
       routine.id,
       routine.title,
       routine.area,
