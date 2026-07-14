@@ -34,6 +34,7 @@ Vercelでは、アプリ画面にURLを貼り付けずに使えます。
 - `FocusTasks`: 今日扱うタスクの日付別一覧
 - `Routines`: 日課一覧
 - `RoutineLog`: 日課の実行ログ
+- `RoutineProgress`: 日課の継続状況
 - `Projects`: 目的 / プロジェクト一覧
 - `DailyReview`: 日次レビュー
 - `AppState`: アプリ復元用の完全データ

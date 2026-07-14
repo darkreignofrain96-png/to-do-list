@@ -1291,6 +1291,7 @@ function renderTaskCard(task, isFocusContext = false) {
   const done = task.status === "完了";
   const dueText = task.dueDate ? formatMonthDay(task.dueDate) : "期限なし";
   const canRemoveFromToday = isFocusContext && Array.isArray(task.focusDates) && task.focusDates.includes(state.selectedDate);
+  const carriedOver = isFocusContext && isCarriedFocusTask(task, state.selectedDate);
   return `
     <article class="task-card ${done ? "is-done" : ""}" draggable="true" data-task-id="${escapeAttr(task.id)}">
       <div class="task-top">
@@ -1300,6 +1301,7 @@ function renderTaskCard(task, isFocusContext = false) {
           <div class="task-meta">
             <span class="badge priority-${escapeAttr((task.priority || "B").toLowerCase())}">${escapeHtml(task.priority || "B")}</span>
             ${renderTaskStatusBadge(task)}
+            ${carriedOver ? `<span class="badge carryover">持ち越し</span>` : ""}
             ${project ? `<span class="badge project" style="border-left-color:${escapeAttr(project.color)}">${escapeHtml(project.name)}</span>` : ""}
             <span>${dueText}</span>
             ${task.estimateMinutes ? `<span>${task.estimateMinutes}分</span>` : ""}
@@ -1454,8 +1456,26 @@ function getFocusTasks() {
 
 function isFocusTask(task, date) {
   if (task.status === "完了") return false;
-  const pickedForToday = Array.isArray(task.focusDates) && task.focusDates.includes(date);
-  return isQuadrantTask(task) && pickedForToday;
+  return isQuadrantTask(task) && hasFocusOnOrBefore(task, date);
+}
+
+function isCarriedFocusTask(task, date) {
+  return isFocusTask(task, date) && !isDirectFocusTask(task, date);
+}
+
+function isDirectFocusTask(task, date) {
+  return Array.isArray(task.focusDates) && task.focusDates.includes(date);
+}
+
+function hasFocusOnOrBefore(task, date) {
+  if (!Array.isArray(task.focusDates)) return false;
+  return task.focusDates.some((focusDate) => focusDate && focusDate <= date);
+}
+
+function focusDatesForSheet(task, baseDate) {
+  const focusDates = normalizeDateList(task.focusDates);
+  if (isFocusTask(task, baseDate)) return uniqueDates([...focusDates, baseDate]);
+  return focusDates;
 }
 
 function isQuadrantTask(task) {
@@ -1882,6 +1902,7 @@ function buildSheetData() {
       ["Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "重要", "緊急", "ステータス", "優先度", "開始日", "期限", "見積分", "進捗", "今日扱う日", "並び順", "メモ", "作成日", "完了日"],
       ...state.tasks.map((task) => {
         const project = state.projects.find((item) => item.id === task.projectId);
+        const focusDates = focusDatesForSheet(task, state.selectedDate);
         return [
           task.id,
           task.title,
@@ -1896,7 +1917,7 @@ function buildSheetData() {
           task.dueDate,
           task.estimateMinutes,
           task.progress,
-          (task.focusDates || []).join(";"),
+          focusDates.join(";"),
           task.order,
           task.notes,
           task.createdAt,
@@ -1905,10 +1926,10 @@ function buildSheetData() {
       }),
     ],
     FocusTasks: [
-      ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス"],
+      ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス", "種別"],
       ...state.tasks.flatMap((task) => {
         const project = state.projects.find((item) => item.id === task.projectId);
-        return (task.focusDates || []).map((date) => [
+        return focusDatesForSheet(task, state.selectedDate).map((date) => [
           date,
           task.id,
           task.title,
@@ -1916,6 +1937,7 @@ function buildSheetData() {
           project?.name || "",
           quadrantLabel(task.quadrant),
           task.status,
+          isDirectFocusTask(task, date) ? "選択" : "持ち越し",
         ]);
       }),
     ],
@@ -1928,6 +1950,10 @@ function buildSheetData() {
       ...Object.entries(state.routineLog).flatMap(([date, log]) =>
         Object.entries(log).map(([routineId, status]) => [date, routineId, status]),
       ),
+    ],
+    RoutineProgress: [
+      ["基準日", "Routine ID", "日課", "領域", "見積分", "現在連続日数", "最長連続日数", "直近7日", "直近30日", "合計達成日数", "直近14日完了日", "直近14日状態"],
+      ...buildRoutineProgressRows(state.selectedDate),
     ],
     Projects: [
       ["Project ID", "目的 / プロジェクト", "目的", "色", "開始日", "終了日", "ステータス", "メモ"],
@@ -1953,6 +1979,29 @@ function buildSheetData() {
       ]),
     ],
   };
+}
+
+function buildRoutineProgressRows(baseDate) {
+  return sortedRoutines().map((routine) => {
+    const stats = computeRoutineStats(routine.id, baseDate);
+    const recentDates = dateWindow(baseDate, 14);
+    const doneDates = recentDates.filter((date) => isRoutineDone(routine.id, date));
+    const recentStatus = recentDates.map((date) => `${date}:${isRoutineDone(routine.id, date) ? "完了" : "未完了"}`).join(" / ");
+    return [
+      baseDate,
+      routine.id,
+      routine.title,
+      routine.area,
+      routine.estimateMinutes,
+      stats.currentStreak,
+      stats.bestStreak,
+      `${stats.done7} / 7`,
+      `${stats.done30} / 30`,
+      stats.totalDone,
+      doneDates.join(";"),
+      recentStatus,
+    ];
+  });
 }
 
 async function readSpreadsheet(file) {

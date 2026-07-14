@@ -787,6 +787,11 @@ button.badge.status:hover {
   background: var(--green-soft);
 }
 
+.badge.carryover {
+  color: #92400e;
+  background: var(--amber-soft);
+}
+
 .badge.project {
   color: var(--ink);
   background: #f1f5f9;
