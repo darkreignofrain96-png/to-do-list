@@ -36,6 +36,7 @@ const quadrantMeta = {
 };
 
 let state = loadState();
+setSelectedDateToToday();
 let hasStoredGasConfig = false;
 let gasConfig = loadGasConfig();
 let uiConfig = loadUiConfig();
@@ -448,6 +449,7 @@ function handleQuickTask(event) {
     createdAt: todayISO(),
     completedAt: "",
     focusDates: [],
+    focusDismissedDates: [],
     order: nextTaskOrder(quadrant),
   });
   form.reset();
@@ -463,6 +465,7 @@ function handleTodayTaskPick(event) {
   if (!task) return;
 
   task.focusDates = uniqueDates([...(task.focusDates || []), state.selectedDate]);
+  task.focusDismissedDates = normalizeDateList(task.focusDismissedDates).filter((date) => date < state.selectedDate);
   if (!task.startDate) task.startDate = state.selectedDate;
   if (!task.dueDate && task.priority === "A") task.dueDate = state.selectedDate;
   saveAndRender("今日へ追加済み");
@@ -554,6 +557,7 @@ function handleTaskDialogSubmit(event) {
     createdAt: existing?.createdAt || todayISO(),
     completedAt: "",
     focusDates: existing?.focusDates || [],
+    focusDismissedDates: existing?.focusDismissedDates || [],
     order: existing && existing.quadrant === quadrant && hasOrder(existing.order) ? Number(existing.order) : nextTaskOrder(quadrant),
   };
   if (next.status === "完了" || next.progress >= 1) {
@@ -584,7 +588,7 @@ async function handleSpreadsheetImport(event) {
     }
     if (!confirm("現在のデータを読み込んだ表の内容に置き換えますか？")) return;
     state = imported;
-    state.selectedDate = state.selectedDate || todayISO();
+    setSelectedDateToToday();
     saveAndRender("読込済み");
   } catch (error) {
     alert(error.message || "読み込みに失敗しました。");
@@ -678,6 +682,7 @@ async function gasLoad() {
       return;
     }
     state = loaded;
+    setSelectedDateToToday();
     saveAndRender("GAS読込済み");
   } catch (error) {
     $("#saveStatus").textContent = "GAS読込失敗";
@@ -1290,8 +1295,9 @@ function renderTaskCard(task, isFocusContext = false) {
   const project = state.projects.find((item) => item.id === task.projectId);
   const done = task.status === "完了";
   const dueText = task.dueDate ? formatMonthDay(task.dueDate) : "期限なし";
-  const canRemoveFromToday = isFocusContext && Array.isArray(task.focusDates) && task.focusDates.includes(state.selectedDate);
   const carriedOver = isFocusContext && isCarriedFocusTask(task, state.selectedDate);
+  const canRemoveFromToday = isFocusContext && isFocusTask(task, state.selectedDate);
+  const removeTitle = carriedOver ? "今日以降の持ち越しから外す" : "今日から外す";
   return `
     <article class="task-card ${done ? "is-done" : ""}" draggable="true" data-task-id="${escapeAttr(task.id)}">
       <div class="task-top">
@@ -1309,7 +1315,7 @@ function renderTaskCard(task, isFocusContext = false) {
         </div>
         <div class="task-actions">
           ${canRemoveFromToday ? `
-            <button type="button" data-action="remove-from-today" data-id="${escapeAttr(task.id)}" title="今日から外す">
+            <button type="button" data-action="remove-from-today" data-id="${escapeAttr(task.id)}" title="${escapeAttr(removeTitle)}">
               <i data-lucide="calendar-x"></i>
             </button>
           ` : ""}
@@ -1347,8 +1353,9 @@ function statusClass(status) {
 
 function removeTaskFromToday(taskId) {
   const task = findTask(taskId);
-  if (!task || !Array.isArray(task.focusDates)) return;
-  task.focusDates = task.focusDates.filter((date) => date !== state.selectedDate);
+  if (!task || !isFocusTask(task, state.selectedDate)) return;
+  task.focusDates = normalizeDateList(task.focusDates).filter((date) => date !== state.selectedDate);
+  task.focusDismissedDates = uniqueDates([...(task.focusDismissedDates || []), state.selectedDate]);
   saveAndRender("今日から外しました");
 }
 
@@ -1468,14 +1475,22 @@ function isDirectFocusTask(task, date) {
 }
 
 function hasFocusOnOrBefore(task, date) {
-  if (!Array.isArray(task.focusDates)) return false;
-  return task.focusDates.some((focusDate) => focusDate && focusDate <= date);
+  const activeDate = latestDateOnOrBefore(task.focusDates, date);
+  if (!activeDate) return false;
+  const dismissedDate = latestDateOnOrBefore(task.focusDismissedDates, date);
+  return !dismissedDate || dismissedDate < activeDate;
 }
 
 function focusDatesForSheet(task, baseDate) {
   const focusDates = normalizeDateList(task.focusDates);
   if (isFocusTask(task, baseDate)) return uniqueDates([...focusDates, baseDate]);
   return focusDates;
+}
+
+function latestDateOnOrBefore(values, date) {
+  return normalizeDateList(values)
+    .filter((value) => value <= date)
+    .at(-1) || "";
 }
 
 function isQuadrantTask(task) {
@@ -1674,6 +1689,10 @@ function saveState(status = "保存済み") {
   scheduleGasAutoSave();
 }
 
+function setSelectedDateToToday() {
+  state.selectedDate = todayISO();
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1769,6 +1788,7 @@ function makeTask(title, projectId, important, urgent, priority, startDate, dueD
     createdAt: todayISO(),
     completedAt: "",
     focusDates: [],
+    focusDismissedDates: [],
     order: null,
   };
 }
@@ -1832,6 +1852,7 @@ function normalizeTask(task) {
     createdAt: normalizeDate(task.createdAt) || todayISO(),
     completedAt: normalizeDate(task.completedAt) || "",
     focusDates: normalizeDateList(task.focusDates),
+    focusDismissedDates: normalizeDateList(task.focusDismissedDates),
     order: hasOrder(task.order) ? Number(task.order) : null,
   };
 }
@@ -1899,7 +1920,7 @@ function exportSpreadsheet() {
 function buildSheetData() {
   return {
     Tasks: [
-      ["Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "重要", "緊急", "ステータス", "優先度", "開始日", "期限", "見積分", "進捗", "今日扱う日", "並び順", "メモ", "作成日", "完了日"],
+      ["Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "重要", "緊急", "ステータス", "優先度", "開始日", "期限", "見積分", "進捗", "今日扱う日", "今日扱い解除日", "並び順", "メモ", "作成日", "完了日"],
       ...state.tasks.map((task) => {
         const project = state.projects.find((item) => item.id === task.projectId);
         const focusDates = focusDatesForSheet(task, state.selectedDate);
@@ -1918,6 +1939,7 @@ function buildSheetData() {
           task.estimateMinutes,
           task.progress,
           focusDates.join(";"),
+          normalizeDateList(task.focusDismissedDates).join(";"),
           task.order,
           task.notes,
           task.createdAt,
@@ -1927,19 +1949,7 @@ function buildSheetData() {
     ],
     FocusTasks: [
       ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス", "種別"],
-      ...state.tasks.flatMap((task) => {
-        const project = state.projects.find((item) => item.id === task.projectId);
-        return focusDatesForSheet(task, state.selectedDate).map((date) => [
-          date,
-          task.id,
-          task.title,
-          task.projectId,
-          project?.name || "",
-          quadrantLabel(task.quadrant),
-          task.status,
-          isDirectFocusTask(task, date) ? "選択" : "持ち越し",
-        ]);
-      }),
+      ...buildFocusTaskRows(),
     ],
     Routines: [
       ["Routine ID", "日課", "領域", "見積分", "並び順", "作成日"],
@@ -2005,6 +2015,31 @@ function buildRoutineProgressRows(baseDate) {
   });
 }
 
+function buildFocusTaskRows() {
+  return state.tasks.flatMap((task) => {
+    const project = state.projects.find((item) => item.id === task.projectId);
+    const base = [
+      task.id,
+      task.title,
+      task.projectId,
+      project?.name || "",
+      quadrantLabel(task.quadrant),
+      task.status,
+    ];
+    const focusRows = focusDatesForSheet(task, state.selectedDate).map((date) => [
+      date,
+      ...base,
+      isDirectFocusTask(task, date) ? "選択" : "持ち越し",
+    ]);
+    const dismissedRows = normalizeDateList(task.focusDismissedDates).map((date) => [
+      date,
+      ...base,
+      "解除",
+    ]);
+    return [...focusRows, ...dismissedRows].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  });
+}
+
 async function readSpreadsheet(file) {
   if (file.name.toLowerCase().endsWith(".json")) {
     return normalizeState(JSON.parse(await file.text()));
@@ -2066,6 +2101,7 @@ function stateFromWorkbookRows(workbookRows) {
         estimateMinutes: row["見積分"],
         progress: row["進捗"],
         focusDates: row["今日扱う日"],
+        focusDismissedDates: row["今日扱い解除日"],
         order: row["並び順"],
         notes: row["メモ"],
         createdAt: row["作成日"],
@@ -2080,7 +2116,12 @@ function stateFromWorkbookRows(workbookRows) {
     const taskId = String(row["Task ID"] || "");
     const task = tasksById.get(taskId);
     if (!date || !task) return;
-    task.focusDates = uniqueDates([...(task.focusDates || []), date]);
+    const type = String(row["種別"] || "");
+    if (type.includes("解除") || type.includes("外")) {
+      task.focusDismissedDates = uniqueDates([...(task.focusDismissedDates || []), date]);
+    } else {
+      task.focusDates = uniqueDates([...(task.focusDates || []), date]);
+    }
   });
 
   const routines = objectsFromRows(routineRows)
