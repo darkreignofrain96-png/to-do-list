@@ -148,6 +148,8 @@ function handleDocumentClick(event) {
   if (action === "new-task-for-project") openTaskDialog("", { projectId: id });
   if (action === "edit-task") openTaskDialog(id);
   if (action === "toggle-task-status") toggleTaskStatus(id);
+  if (action === "move-focus-up") moveFocusTask(id, -1);
+  if (action === "move-focus-down") moveFocusTask(id, 1);
   if (action === "remove-from-today") removeTaskFromToday(id);
   if (action === "close-dialog") closeTaskDialog();
 
@@ -229,6 +231,9 @@ function handleDragStart(event) {
 
   const card = event.target.closest("[data-task-id]");
   if (!card) return;
+  if (card.closest("#focusTaskList")) {
+    event.dataTransfer.setData("application/x-focus-task-id", card.dataset.taskId);
+  }
   event.dataTransfer.setData("text/plain", card.dataset.taskId);
   event.dataTransfer.effectAllowed = "move";
   card.classList.add("dragging");
@@ -241,6 +246,8 @@ function handleDragEnd(event) {
 
   const card = event.target.closest("[data-task-id]");
   if (card) card.classList.remove("dragging");
+  $$("#focusTaskList .task-card").forEach((item) => item.classList.remove("is-over"));
+  $("#focusTaskList")?.classList.remove("is-over");
   $$(".quadrant-column").forEach((column) => column.classList.remove("is-over"));
 }
 
@@ -252,6 +259,17 @@ function handleDragOver(event) {
     event.preventDefault();
     $$(".routine-item").forEach((item) => item.classList.toggle("is-over", item === routineItem));
     return;
+  }
+
+  if (isFocusTaskDrag(event)) {
+    const focusList = event.target.closest("#focusTaskList");
+    if (focusList) {
+      const targetCard = event.target.closest("#focusTaskList [data-task-id]");
+      event.preventDefault();
+      focusList.classList.add("is-over");
+      $$("#focusTaskList .task-card").forEach((item) => item.classList.toggle("is-over", item === targetCard));
+      return;
+    }
   }
 
   const column = event.target.closest("[data-quadrant]");
@@ -266,12 +284,33 @@ function handleDragLeave(event) {
     routineItem.classList.remove("is-over");
   }
 
+  const focusList = event.target.closest("#focusTaskList");
+  if (focusList && !focusList.contains(event.relatedTarget)) {
+    focusList.classList.remove("is-over");
+    $$("#focusTaskList .task-card").forEach((item) => item.classList.remove("is-over"));
+  }
+
   const column = event.target.closest("[data-quadrant]");
   if (!column || column.contains(event.relatedTarget)) return;
   column.classList.remove("is-over");
 }
 
 function handleDrop(event) {
+  const focusTaskId = event.dataTransfer.getData("application/x-focus-task-id");
+  if (focusTaskId) {
+    const focusList = event.target.closest("#focusTaskList");
+    if (focusList) {
+      const targetCard = event.target.closest("#focusTaskList [data-task-id]");
+      event.preventDefault();
+      if (reorderFocusTaskByDrop(focusTaskId, targetCard, event.clientY)) {
+        saveAndRender("今日扱うタスクの順番を更新しました");
+      }
+      focusList.classList.remove("is-over");
+      $$("#focusTaskList .task-card").forEach((item) => item.classList.remove("is-over"));
+      return;
+    }
+  }
+
   const routineId = event.dataTransfer.getData("application/x-routine-id");
   if (routineId) {
     const target = event.target.closest("[data-routine-id]");
@@ -298,11 +337,14 @@ function handleTaskPointerDown(event) {
   if (event.button !== undefined && event.button !== 0) return;
   if (event.target.closest("button, input, select, textarea, a, label")) return;
 
-  const card = event.target.closest("#quadrantBoard [data-task-id]");
+  const focusCard = event.target.closest("#focusTaskList [data-task-id]");
+  const quadrantCard = event.target.closest("#quadrantBoard [data-task-id]");
+  const card = focusCard || quadrantCard;
   if (!card) return;
 
   pointerTaskDrag = {
     id: card.dataset.taskId,
+    source: focusCard ? "focus" : "quadrant",
     startX: event.clientX,
     startY: event.clientY,
     active: false,
@@ -316,10 +358,17 @@ function handleTaskPointerMove(event) {
   if (!pointerTaskDrag.active && distance < 8) return;
 
   pointerTaskDrag.active = true;
-  const card = $(`#quadrantBoard [data-task-id="${cssEscape(pointerTaskDrag.id)}"]`);
+  const cardSelector = pointerTaskDrag.source === "focus" ? "#focusTaskList" : "#quadrantBoard";
+  const card = $(`${cardSelector} [data-task-id="${cssEscape(pointerTaskDrag.id)}"]`);
   if (card) card.classList.add("dragging");
 
-  const column = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-quadrant]");
+  const target = document.elementFromPoint(event.clientX, event.clientY);
+  const focusList = target?.closest("#focusTaskList");
+  const focusTargetCard = target?.closest("#focusTaskList [data-task-id]");
+  $("#focusTaskList")?.classList.toggle("is-over", pointerTaskDrag.source === "focus" && Boolean(focusList));
+  $$("#focusTaskList .task-card").forEach((item) => item.classList.toggle("is-over", pointerTaskDrag.source === "focus" && item === focusTargetCard));
+
+  const column = target?.closest("[data-quadrant]");
   $$(".quadrant-column").forEach((item) => item.classList.toggle("is-over", item === column));
   event.preventDefault();
 }
@@ -332,6 +381,13 @@ function handleTaskPointerUp(event) {
 
   if (drag.active) {
     const target = document.elementFromPoint(event.clientX, event.clientY);
+    const focusList = target?.closest("#focusTaskList");
+    const targetFocusCard = target?.closest("#focusTaskList [data-task-id]");
+    if (drag.source === "focus" && focusList && reorderFocusTaskByDrop(drag.id, targetFocusCard, event.clientY)) {
+      saveAndRender("今日扱うタスクの順番を更新しました");
+      return;
+    }
+
     const column = target?.closest("[data-quadrant]");
     const targetCard = target?.closest("#quadrantBoard [data-task-id]");
     const task = findTask(drag.id);
@@ -347,6 +403,9 @@ function handleTaskPointerUp(event) {
 function cancelTaskPointerDrag() {
   pointerTaskDrag = null;
   $$("#quadrantBoard .task-card.dragging").forEach((card) => card.classList.remove("dragging"));
+  $$("#focusTaskList .task-card.dragging").forEach((card) => card.classList.remove("dragging"));
+  $$("#focusTaskList .task-card").forEach((card) => card.classList.remove("is-over"));
+  $("#focusTaskList")?.classList.remove("is-over");
   $$(".quadrant-column").forEach((column) => column.classList.remove("is-over"));
 }
 
@@ -388,6 +447,33 @@ function reorderTaskByDrop(taskId, targetQuadrant, targetElement, clientY) {
 
 function isRoutineDrag(event) {
   return Array.from(event.dataTransfer?.types || []).includes("application/x-routine-id");
+}
+
+function isFocusTaskDrag(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("application/x-focus-task-id");
+}
+
+function reorderFocusTaskByDrop(taskId, targetElement, clientY) {
+  const task = findTask(taskId);
+  if (!task || !isFocusTask(task, state.selectedDate)) return false;
+
+  const previousOrder = getFocusTasks().map((item) => item.id).join("|");
+  const targetId = targetElement?.dataset.taskId || "";
+  if (targetId === taskId) return false;
+
+  const tasks = getFocusTasks().filter((item) => item.id !== taskId);
+  let insertIndex = tasks.length;
+  if (targetId) {
+    const targetIndex = tasks.findIndex((item) => item.id === targetId);
+    if (targetIndex >= 0) {
+      const rect = targetElement.getBoundingClientRect();
+      insertIndex = targetIndex + (clientY > rect.top + rect.height / 2 ? 1 : 0);
+    }
+  }
+
+  tasks.splice(insertIndex, 0, task);
+  applyFocusTaskOrder(state.selectedDate, tasks);
+  return previousOrder !== tasks.map((item) => item.id).join("|");
 }
 
 function moveRoutine(routineId, direction) {
@@ -468,6 +554,7 @@ function handleTodayTaskPick(event) {
   task.focusDismissedDates = normalizeDateList(task.focusDismissedDates).filter((date) => date < state.selectedDate);
   if (!task.startDate) task.startDate = state.selectedDate;
   if (!task.dueDate && task.priority === "A") task.dueDate = state.selectedDate;
+  appendFocusTaskOrder(task, state.selectedDate);
   saveAndRender("今日へ追加済み");
 }
 
@@ -1144,7 +1231,7 @@ function renderFocusTasks() {
   const root = $("#focusTaskList");
   const tasks = getFocusTasks();
   root.innerHTML = tasks.length
-    ? tasks.map((task) => renderTaskCard(task, true)).join("")
+    ? tasks.map((task, index) => renderTaskCard(task, true, { focusIndex: index, focusCount: tasks.length })).join("")
     : `<div class="empty">今日扱うタスクはありません</div>`;
 }
 
@@ -1291,12 +1378,13 @@ function renderGantt() {
   root.innerHTML = `<div class="gantt-grid">${header}${rows}</div>`;
 }
 
-function renderTaskCard(task, isFocusContext = false) {
+function renderTaskCard(task, isFocusContext = false, options = {}) {
   const project = state.projects.find((item) => item.id === task.projectId);
   const done = task.status === "完了";
   const dueText = task.dueDate ? formatMonthDay(task.dueDate) : "期限なし";
   const carriedOver = isFocusContext && isCarriedFocusTask(task, state.selectedDate);
   const canRemoveFromToday = isFocusContext && isFocusTask(task, state.selectedDate);
+  const canMoveFocusTask = isFocusContext && options.focusCount > 1;
   const removeTitle = carriedOver ? "今日以降の持ち越しから外す" : "今日から外す";
   return `
     <article class="task-card ${done ? "is-done" : ""}" draggable="true" data-task-id="${escapeAttr(task.id)}">
@@ -1314,6 +1402,14 @@ function renderTaskCard(task, isFocusContext = false) {
           </div>
         </div>
         <div class="task-actions">
+          ${canMoveFocusTask ? `
+            <button type="button" data-action="move-focus-up" data-id="${escapeAttr(task.id)}" title="上へ" ${options.focusIndex === 0 ? "disabled" : ""}>
+              <i data-lucide="arrow-up"></i>
+            </button>
+            <button type="button" data-action="move-focus-down" data-id="${escapeAttr(task.id)}" title="下へ" ${options.focusIndex === options.focusCount - 1 ? "disabled" : ""}>
+              <i data-lucide="arrow-down"></i>
+            </button>
+          ` : ""}
           ${canRemoveFromToday ? `
             <button type="button" data-action="remove-from-today" data-id="${escapeAttr(task.id)}" title="${escapeAttr(removeTitle)}">
               <i data-lucide="calendar-x"></i>
@@ -1356,7 +1452,19 @@ function removeTaskFromToday(taskId) {
   if (!task || !isFocusTask(task, state.selectedDate)) return;
   task.focusDates = normalizeDateList(task.focusDates).filter((date) => date !== state.selectedDate);
   task.focusDismissedDates = uniqueDates([...(task.focusDismissedDates || []), state.selectedDate]);
+  applyFocusTaskOrder(state.selectedDate, getFocusTasks().filter((item) => item.id !== taskId));
   saveAndRender("今日から外しました");
+}
+
+function moveFocusTask(taskId, direction) {
+  const tasks = getFocusTasks();
+  const index = tasks.findIndex((task) => task.id === taskId);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= tasks.length) return;
+
+  [tasks[index], tasks[nextIndex]] = [tasks[nextIndex], tasks[index]];
+  applyFocusTaskOrder(state.selectedDate, tasks);
+  saveAndRender("今日扱うタスクの順番を更新しました");
 }
 
 function toggleTaskStatus(taskId) {
@@ -1455,10 +1563,10 @@ function syncDialogQuadrantFromBooleans() {
   form.elements.quadrant.value = quadrantFromBooleans(form.elements.important.checked, form.elements.urgent.checked);
 }
 
-function getFocusTasks() {
+function getFocusTasks(date = state.selectedDate) {
   return state.tasks
-    .filter((task) => isFocusTask(task, state.selectedDate))
-    .sort(sortTasks);
+    .filter((task) => isFocusTask(task, date))
+    .sort((a, b) => sortFocusTasks(a, b, date));
 }
 
 function isFocusTask(task, date) {
@@ -1614,6 +1722,41 @@ function sortTasksByOrder(a, b) {
   return Number(a.order ?? 0) - Number(b.order ?? 0) || sortTasks(a, b);
 }
 
+function sortFocusTasks(a, b, date) {
+  const orderA = focusTaskOrderValue(a.id, date);
+  const orderB = focusTaskOrderValue(b.id, date);
+  return orderA - orderB || sortTasks(a, b);
+}
+
+function focusTaskOrderValue(taskId, date) {
+  const orderDate = latestFocusTaskOrderDate(taskId, date);
+  if (!orderDate) return Number.MAX_SAFE_INTEGER;
+  const order = state.focusTaskOrders?.[orderDate]?.[taskId];
+  return hasOrder(order) ? Number(order) : Number.MAX_SAFE_INTEGER;
+}
+
+function latestFocusTaskOrderDate(taskId, date) {
+  return Object.keys(state.focusTaskOrders || {})
+    .filter((orderDate) => orderDate <= date && hasOrder(state.focusTaskOrders[orderDate]?.[taskId]))
+    .sort()
+    .at(-1) || "";
+}
+
+function appendFocusTaskOrder(task, date) {
+  const tasks = getFocusTasks(date).filter((item) => item.id !== task.id);
+  tasks.push(task);
+  applyFocusTaskOrder(date, tasks);
+}
+
+function applyFocusTaskOrder(date, orderedTasks) {
+  const normalizedDate = normalizeDate(date);
+  if (!normalizedDate) return;
+  state.focusTaskOrders ||= {};
+  state.focusTaskOrders[normalizedDate] = Object.fromEntries(
+    orderedTasks.map((task, index) => [task.id, index]),
+  );
+}
+
 function applyTaskOrder(orderedTasks) {
   orderedTasks.forEach((task, index) => {
     task.order = index;
@@ -1759,6 +1902,7 @@ function defaultState() {
       makeRoutine("就寝前スマホオフ", "健康・体力", 10, 4),
     ],
     routineLog: {},
+    focusTaskOrders: {},
     dailyReviews: {
       [today]: {
         mainGoal: "",
@@ -1812,6 +1956,7 @@ function normalizeState(input) {
     tasks: normalizeTaskOrder(Array.isArray(input.tasks) ? input.tasks.map(normalizeTask).filter(Boolean) : fallback.tasks),
     routines: normalizeRoutineOrder(Array.isArray(input.routines) ? input.routines.map(normalizeRoutine).filter(Boolean) : fallback.routines),
     routineLog: input.routineLog && typeof input.routineLog === "object" ? input.routineLog : {},
+    focusTaskOrders: normalizeFocusTaskOrders(input.focusTaskOrders),
     dailyReviews: input.dailyReviews && typeof input.dailyReviews === "object" ? input.dailyReviews : {},
   };
 }
@@ -1901,6 +2046,25 @@ function normalizeRoutineOrder(routines) {
     .map((routine, index) => ({ ...routine, order: index }));
 }
 
+function normalizeFocusTaskOrders(input) {
+  if (!input || typeof input !== "object") return {};
+
+  return Object.fromEntries(
+    Object.entries(input)
+      .map(([date, value]) => {
+        const normalizedDate = normalizeDate(date);
+        if (!normalizedDate || !value || typeof value !== "object") return null;
+        const orders = Object.entries(value)
+          .map(([taskId, order]) => [String(taskId), Number(order)])
+          .filter(([taskId, order]) => taskId && Number.isFinite(order))
+          .sort((a, b) => a[1] - b[1])
+          .map(([taskId], index) => [taskId, index]);
+        return orders.length ? [normalizedDate, Object.fromEntries(orders)] : null;
+      })
+      .filter(Boolean),
+  );
+}
+
 function exportSpreadsheet() {
   const sheets = buildSheetData();
   const fileBase = `todo-list-${state.selectedDate}`;
@@ -1948,7 +2112,7 @@ function buildSheetData() {
       }),
     ],
     FocusTasks: [
-      ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス", "種別"],
+      ["日付", "Task ID", "タスク", "Project ID", "目的 / プロジェクト", "四象限", "ステータス", "種別", "並び順"],
       ...buildFocusTaskRows(),
     ],
     Routines: [
@@ -2030,11 +2194,13 @@ function buildFocusTaskRows() {
       date,
       ...base,
       isDirectFocusTask(task, date) ? "選択" : "持ち越し",
+      focusTaskOrderValue(task.id, date) === Number.MAX_SAFE_INTEGER ? "" : focusTaskOrderValue(task.id, date),
     ]);
     const dismissedRows = normalizeDateList(task.focusDismissedDates).map((date) => [
       date,
       ...base,
       "解除",
+      "",
     ]);
     return [...focusRows, ...dismissedRows].sort((a, b) => String(a[0]).localeCompare(String(b[0])));
   });
@@ -2111,6 +2277,7 @@ function stateFromWorkbookRows(workbookRows) {
     .filter(Boolean);
 
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const focusTaskOrders = {};
   objectsFromRows(focusTaskRows).forEach((row) => {
     const date = normalizeDate(row["日付"]);
     const taskId = String(row["Task ID"] || "");
@@ -2121,6 +2288,10 @@ function stateFromWorkbookRows(workbookRows) {
       task.focusDismissedDates = uniqueDates([...(task.focusDismissedDates || []), date]);
     } else {
       task.focusDates = uniqueDates([...(task.focusDates || []), date]);
+      if (hasOrder(row["並び順"])) {
+        focusTaskOrders[date] ||= {};
+        focusTaskOrders[date][task.id] = Number(row["並び順"]);
+      }
     }
   });
 
@@ -2163,6 +2334,7 @@ function stateFromWorkbookRows(workbookRows) {
     tasks,
     routines,
     routineLog,
+    focusTaskOrders,
     dailyReviews,
   });
 }

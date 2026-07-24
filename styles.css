@@ -552,6 +552,11 @@ main {
   gap: 6px;
 }
 
+.task-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .routine-actions {
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -569,7 +574,8 @@ main {
   color: var(--muted);
 }
 
-.routine-actions button:disabled {
+.routine-actions button:disabled,
+.task-actions button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
@@ -580,7 +586,8 @@ main {
   border-color: var(--blue);
 }
 
-.routine-actions button:disabled:hover {
+.routine-actions button:disabled:hover,
+.task-actions button:disabled:hover {
   color: var(--muted);
   border-color: var(--line-soft);
 }
@@ -721,6 +728,15 @@ main {
 .task-card.dragging {
   opacity: 0.52;
   pointer-events: none;
+}
+
+.task-card.is-over {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+#focusTaskList.is-over {
+  border-radius: var(--radius);
 }
 
 .task-top {
